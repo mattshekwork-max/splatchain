@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SplatChain — PlayCanvas Demo</title>
+  <script src="https://cdn.jsdelivr.net/npm/ethers@6/dist/ethers.umd.min.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #0a0a0a; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; overflow: hidden; }
+    #canvas-container { width: 100vw; height: 100vh; position: relative; }
+    canvas { display: block; width: 100%; height: 100%; }
+
+    /* Controls overlay */
+    #controls {
+      position: fixed; top: 20px; left: 20px; z-index: 9999;
+      background: #1a1a1aee; border: 1px solid #333; border-radius: 12px;
+      padding: 16px; width: 360px; backdrop-filter: blur(12px);
+      box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+    }
+    #controls h2 {
+      font-size: 14px; color: #22c55e; margin-bottom: 12px;
+      display: flex; align-items: center; gap: 8px;
+    }
+    #controls label {
+      font-size: 12px; color: #888; display: block; margin-bottom: 4px;
+    }
+    #controls input, #controls select {
+      width: 100%; background: #111; border: 1px solid #333; border-radius: 6px;
+      color: #ddd; padding: 8px 10px; font-size: 13px; margin-bottom: 12px;
+      outline: none; transition: border-color 0.2s;
+    }
+    #controls input:focus, #controls select:focus {
+      border-color: #22c55e;
+    }
+    #controls button {
+      width: 100%; padding: 10px; border: none; border-radius: 6px;
+      background: #22c55e; color: #0a0a0a; font-size: 13px; font-weight: 600;
+      cursor: pointer; transition: background 0.2s;
+    }
+    #controls button:hover { background: #16a34a; }
+    #controls button:disabled { background: #333; color: #666; cursor: not-allowed; }
+    #result {
+      margin-top: 12px; padding: 10px; border-radius: 6px; background: #111;
+      font-size: 12px; color: #aaa; display: none; word-break: break-all;
+    }
+  </style>
+</head>
+<body>
+  <div id="canvas-container"></div>
+
+  <div id="controls">
+    <h2>✅ SplatChain — PlayCanvas Demo</h2>
+
+    <label>Splat File URL</label>
+    <input type="text" id="splatUrl" placeholder="https://example.com/scene.splat"
+           value="">
+
+    <label>Sidecar URL (optional)</label>
+    <input type="text" id="sidecarUrl" placeholder="https://example.com/scene.splat.verify.json"
+           value="">
+
+    <label>Registry Contract</label>
+    <input type="text" id="registryAddress" placeholder="0x..."
+           value="">
+
+    <label>RPC Endpoint</label>
+    <input type="text" id="rpcUrl" placeholder="https://sepolia.base.org"
+           value="https://sepolia.base.org">
+
+    <label>Or load local file</label>
+    <input type="file" id="splatFile" accept=".ply,.splat,.ksplat" style="padding:4px">
+
+    <button id="verifyBtn" onclick="runVerify()">Verify Splat</button>
+
+    <div id="result"></div>
+  </div>
+
+  <script type="module">
+    import { SplatChainPlugin, VerificationStatus, computeModelHash } from './src/index.js';
+
+    window.runVerify = async function runVerify() {
+      const btn = document.getElementById('verifyBtn');
+      const resultDiv = document.getElementById('result');
+      btn.disabled = true;
+      btn.textContent = 'Verifying...';
+      resultDiv.style.display = 'block';
+      resultDiv.textContent = 'Computing model hash...';
+
+      try {
+        const registryAddress = document.getElementById('registryAddress').value.trim() || undefined;
+        const rpcUrl = document.getElementById('rpcUrl').value.trim();
+        const sidecarUrl = document.getElementById('sidecarUrl').value.trim() || undefined;
+        const fileInput = document.getElementById('splatFile');
+        const urlInput = document.getElementById('splatUrl').value.trim();
+
+        let splatData = null;
+        let splatUrl = urlInput || undefined;
+
+        // Load from file or URL
+        if (fileInput.files.length > 0) {
+          splatData = await fileInput.files[0].arrayBuffer();
+        } else if (urlInput) {
+          resultDiv.textContent = 'Fetching splat file...';
+          const resp = await fetch(urlInput);
+          if (!resp.ok) throw new Error(`Failed to fetch: ${resp.status}`);
+          splatData = await resp.arrayBuffer();
+        } else {
+          throw new Error('Provide a splat URL or select a file');
+        }
+
+        // Compute hash
+        resultDiv.textContent = 'Computing SHA-256 hash...';
+        const modelHash = await computeModelHash(splatData);
+        resultDiv.textContent = `Model hash: ${modelHash.slice(0, 32)}...\nChecking registry...`;
+
+        // Create plugin and verify
+        const plugin = new SplatChainPlugin(null, {
+          registryAddress,
+          rpcUrl,
+          sidecarUrl,
+          showPanel: true,
+          container: document.body,
+        });
+
+        const result = await plugin.attach(null, {
+          splatData: new Uint8Array(splatData),
+          splatUrl,
+        });
+
+        // Show result
+        const meta = {
+          [VerificationStatus.VERIFIED]: '✅',
+          [VerificationStatus.ATTESTED_UNVERIFIED]: '⚠️',
+          [VerificationStatus.REVOKED]: '🚫',
+          [VerificationStatus.UNVERIFIED]: '⚠️',
+          [VerificationStatus.OFFLINE]: '📡',
+          [VerificationStatus.SIG_INVALID]: '⚠️',
+        };
+
+        resultDiv.innerHTML = `
+          <strong>${meta[result.status] ?? '❓'} ${result.message}</strong><br><br>
+          <span style="color:#666">Status:</span> ${result.status}<br>
+          <span style="color:#666">Model Hash:</span> ${result.modelHash?.slice(0, 32)}...<br>
+          ${result.inputHash ? `<span style="color:#666">Input Hash:</span> ${result.inputHash?.slice(0, 32)}...<br>` : ''}
+          <span style="color:#666">Tier:</span> ${result.tier}
+        `;
+      } catch (e) {
+        resultDiv.innerHTML = `<span style="color:#ef4444">Error: ${e.message}</span>`;
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Verify Splat';
+      }
+    };
+  </script>
+</body>
+</html>
