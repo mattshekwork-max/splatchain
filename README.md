@@ -1,6 +1,6 @@
 # SplatChain
 
-**Blockchain-verified provenance for Gaussian Splats.**
+**Tamper-proof provenance for any 3D asset — proves a capture is real, not AI-generated, and hasn't been modified since.**
 
 SplatChain creates an immutable chain of custody from raw sensor capture through trained model — verifiable by any viewer in under 2 seconds, at under a cent.
 
